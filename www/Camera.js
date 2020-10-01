@@ -182,4 +182,19 @@ cameraExport.cleanup = function (successCallback, errorCallback) {
     exec(successCallback, errorCallback, 'Camera', 'cleanup', []);
 };
 
+/**
+ * Close the camera if it is opened 
+ *
+ * __Supported Platforms__
+ *
+ * ![](doc/img/ios-success.png)
+ *
+ * @example
+ * navigator.camera.close();
+ *
+ */
+cameraExport.close = function() {
+    exec(null, null, "Camera", "close", []);
+};
+
 module.exports = cameraExport;

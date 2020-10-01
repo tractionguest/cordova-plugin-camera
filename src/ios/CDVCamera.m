@@ -238,6 +238,24 @@ static NSString* toBase64(NSData* data) {
     }
 }
 
+- (void)close:(CDVInvokedUrlCommand*)command
+{
+    // If a popover is already open, close it
+    if (([[self pickerController] pickerPopoverController] != nil) && [[[self pickerController] pickerPopoverController] isPopoverVisible]) {
+        [[[self pickerController] pickerPopoverController] dismissPopoverAnimated:YES];
+        [[[self pickerController] pickerPopoverController] setDelegate:nil];
+        [[self pickerController] setPickerPopoverController:nil];
+    }
+
+    [self.pickerController dismissViewControllerAnimated:NO completion:^{
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"dismissed camera"];
+        [self.commandDelegate sendPluginResult:result callbackId:self.pickerController.callbackId];
+
+        self.hasPendingOperation = NO;
+        self.pickerController = nil;
+    }];
+}
+
 - (NSInteger)integerValueForKey:(NSDictionary*)dict key:(NSString*)key defaultValue:(NSInteger)defaultValue
 {
     NSInteger value = defaultValue;
