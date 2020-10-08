@@ -81,6 +81,9 @@ static NSString* toBase64(NSData* data) {
     pictureOptions.saveToPhotoAlbum = [[command argumentAtIndex:9 withDefault:@(NO)] boolValue];
     pictureOptions.popoverOptions = [command argumentAtIndex:10 withDefault:nil];
     pictureOptions.cameraDirection = [[command argumentAtIndex:11 withDefault:@(UIImagePickerControllerCameraDeviceRear)] unsignedIntegerValue];
+    pictureOptions.idleTimeout = [command argumentAtIndex:12 withDefault:nil];
+
+    NSLog(@"%@", pictureOptions.idleTimeout);
 
     pictureOptions.popoverSupported = NO;
     pictureOptions.usesGeolocation = NO;
