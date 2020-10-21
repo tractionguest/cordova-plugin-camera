@@ -104,8 +104,6 @@ static NSString* toBase64(NSData* data) {
 + (void)initialize
 {
     org_apache_cordova_validArrowDirections = [[NSSet alloc] initWithObjects:[NSNumber numberWithInt:UIPopoverArrowDirectionUp], [NSNumber numberWithInt:UIPopoverArrowDirectionDown], [NSNumber numberWithInt:UIPopoverArrowDirectionLeft], [NSNumber numberWithInt:UIPopoverArrowDirectionRight], [NSNumber numberWithInt:UIPopoverArrowDirectionAny], nil];
-    
-
 }
 
 @synthesize hasPendingOperation, pickerController, locationManager, idleTimeout;
@@ -172,7 +170,6 @@ static NSString* toBase64(NSData* data) {
     // if it is 0 the idle timer functions will return without performing the selector
     if (timeout == nil) timeout = [NSNumber numberWithDouble:0.0];
     self.idleTimeout = [timeout doubleValue];
-    NSLog(@"idle timeout: %f", self.idleTimeout);
 
     self.hasPendingOperation = YES;
     __weak CDVCamera* weakSelf = self;
@@ -260,9 +257,6 @@ static NSString* toBase64(NSData* data) {
         } else {
             cameraPicker.modalPresentationStyle = UIModalPresentationCurrentContext;
             [self.viewController presentViewController:cameraPicker animated:YES completion:^{
-//                ///***///
-//                [self restartIdleTimer];
-//                ///***///
                 self.hasPendingOperation = NO;
             }];
         }
