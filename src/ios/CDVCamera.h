@@ -74,37 +74,7 @@ typedef NSUInteger CDVMediaType;
 @property (assign) BOOL cropToSize;
 @property (strong) UIView* webView;
 
-// This will get called after the timeout has completed when touch events stop firing
-@property (nonatomic, copy, nullable) void (^idleTimeoutCallback)(void);
-//@property (strong) NSTimer* _Nullable idleTimer;
-
-- (void)cancelTimer;
-// Restart the idle timer by cancelling previous timer and creating a new one
-- (void)restartTimer;
-
 + (instancetype) createFromPictureOptions:(CDVPictureOptions*)options;
-
-- (void)encodeWithCoder:(nonnull NSCoder *)coder;
-
-- (void)traitCollectionDidChange:(nullable UITraitCollection *)previousTraitCollection;
-
-- (void)preferredContentSizeDidChangeForChildContentContainer:(nonnull id<UIContentContainer>)container;
-
-- (CGSize)sizeForChildContentContainer:(nonnull id<UIContentContainer>)container withParentContainerSize:(CGSize)parentSize;
-
-- (void)systemLayoutFittingSizeDidChangeForChildContentContainer:(nonnull id<UIContentContainer>)container;
-
-- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(nonnull id<UIViewControllerTransitionCoordinator>)coordinator;
-
-- (void)willTransitionToTraitCollection:(nonnull UITraitCollection *)newCollection withTransitionCoordinator:(nonnull id<UIViewControllerTransitionCoordinator>)coordinator;
-
-- (void)didUpdateFocusInContext:(nonnull UIFocusUpdateContext *)context withAnimationCoordinator:(nonnull UIFocusAnimationCoordinator *)coordinator;
-
-- (void)setNeedsFocusUpdate;
-
-- (BOOL)shouldUpdateFocusInContext:(nonnull UIFocusUpdateContext *)context;
-
-- (void)updateFocusIfNeeded;
 
 @end
 
@@ -114,14 +84,12 @@ typedef NSUInteger CDVMediaType;
                        UINavigationControllerDelegate,
                        UIPopoverControllerDelegate,
                        CLLocationManagerDelegate>
-{
-}
+{}
 
 @property (strong) CDVCameraPicker* pickerController;
 @property (strong) NSMutableDictionary *metadata;
 @property (strong, nonatomic) CLLocationManager *locationManager;
 @property (strong) NSData* data;
-//
 
 /*
  * getPicture
@@ -139,7 +107,6 @@ typedef NSUInteger CDVMediaType;
 
 - (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info;
 - (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingImage:(UIImage*)image editingInfo:(NSDictionary*)editingInfo;
-
 - (void)imagePickerControllerDidCancel:(UIImagePickerController*)picker;
 - (void)navigationController:(UINavigationController *)navigationController willShowViewController:(UIViewController *)viewController animated:(BOOL)animated;
 
@@ -147,31 +114,3 @@ typedef NSUInteger CDVMediaType;
 - (void)locationManager:(CLLocationManager *)manager didFailWithError:(NSError *)error;
 
 @end
-
-//@interface IdleTimer: NSObject
-//
-//+ (void)setup:(void (^_Nonnull)(void))idleCompletionBlock timeInterval:(NSTimeInterval)interval;
-//// invalidate and initialize timer
-//+ (void)restart;
-//// invalidates timer
-//+ (void)reset;
-
-//@property (nonatomic, strong) NSTimer* _Nullable idleTimer;
-
-//@property (nonatomic, copy, nonnull, readonly) void (^idleCompletionBlock)(void);
-
-
-
-NS_ASSUME_NONNULL_BEGIN
-
-@interface UIButton (TouchEventNotifications)
-@end
-
-NS_ASSUME_NONNULL_END
-
-//NS_ASSUME_NONNULL_BEGIN
-//
-//@interface UIView (IdleTimerTrigger)
-//@end
-//
-//NS_ASSUME_NONNULL_END

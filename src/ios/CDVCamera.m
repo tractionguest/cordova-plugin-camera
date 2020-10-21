@@ -19,6 +19,7 @@
 
 #import "CDVCamera.h"
 #import "CDVJpegHeaderWriter.h"
+#import "UIWindow+TouchInterceptor.h"
 #import "UIImage+CropScaleOrientation.h"
 #import <ImageIO/CGImageProperties.h>
 #import <AssetsLibrary/ALAssetRepresentation.h>
@@ -82,9 +83,6 @@ static NSString* toBase64(NSData* data) {
     pictureOptions.popoverOptions = [command argumentAtIndex:10 withDefault:nil];
     pictureOptions.cameraDirection = [[command argumentAtIndex:11 withDefault:@(UIImagePickerControllerCameraDeviceRear)] unsignedIntegerValue];
     pictureOptions.idleTimeout = [command argumentAtIndex:12 withDefault:nil];
-
-    NSLog(@"%@", pictureOptions.idleTimeout);
-
     pictureOptions.popoverSupported = NO;
     pictureOptions.usesGeolocation = NO;
 
@@ -97,6 +95,7 @@ static NSString* toBase64(NSData* data) {
 @interface CDVCamera ()
 
 @property (readwrite, assign) BOOL hasPendingOperation;
+@property (readwrite, assign) NSTimeInterval idleTimeout;
 
 @end
 
@@ -105,9 +104,11 @@ static NSString* toBase64(NSData* data) {
 + (void)initialize
 {
     org_apache_cordova_validArrowDirections = [[NSSet alloc] initWithObjects:[NSNumber numberWithInt:UIPopoverArrowDirectionUp], [NSNumber numberWithInt:UIPopoverArrowDirectionDown], [NSNumber numberWithInt:UIPopoverArrowDirectionLeft], [NSNumber numberWithInt:UIPopoverArrowDirectionRight], [NSNumber numberWithInt:UIPopoverArrowDirectionAny], nil];
+    
+
 }
 
-@synthesize hasPendingOperation, pickerController, locationManager;
+@synthesize hasPendingOperation, pickerController, locationManager, idleTimeout;
 
 - (NSURL*) urlTransformer:(NSURL*)url
 {
@@ -139,13 +140,40 @@ static NSString* toBase64(NSData* data) {
            (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
 }
 
+#pragma mark - Idle Timeout
+// Trigger method when a kTouchesEndedNotification is received,
+// originating from [sendEvent:] in the UIWindow+TouchInterceptor class
+- (void)restartIdleTimer
+{
+    // return early - no idle timeouts
+    if (self.idleTimeout <= 0) return;
+    
+    [self cancelIdleTimer];
+    
+    // Call the method that dismisses the image picker controller after the idle timeout has elapsed
+    [self performSelector:@selector(imagePickerControllerDidCancel:)
+               withObject:self.pickerController
+               afterDelay:self.idleTimeout];
+}
+
+// Cancel idle timer when a kTouchesBeganNotification is received
+// originating from [sendEvent:] in the UIWindow+TouchInterceptor class
+- (void)cancelIdleTimer {
+    if (self.idleTimeout <= 0) return;
+    // cancels the request made in restartIdleTimer
+    [CDVCamera cancelPreviousPerformRequestsWithTarget:self];
+}
+
+
 - (void)takePicture:(CDVInvokedUrlCommand*)command
 {
-    
-    NSLog(@"/n/nTake pic/n/n");
-    [self.pickerController cancelTimer];
-    
-    
+    NSNumber *timeout = [CDVPictureOptions createFromTakePictureArguments:command].idleTimeout;
+    // If timeout is nil, give it a value of 0
+    // if it is 0 the idle timer functions will return without performing the selector
+    if (timeout == nil) timeout = [NSNumber numberWithDouble:0.0];
+    self.idleTimeout = [timeout doubleValue];
+    NSLog(@"idle timeout: %f", self.idleTimeout);
+
     self.hasPendingOperation = YES;
     __weak CDVCamera* weakSelf = self;
 
@@ -193,27 +221,29 @@ static NSString* toBase64(NSData* data) {
 
 - (void)showCameraPicker:(NSString*)callbackId withOptions:(CDVPictureOptions *) pictureOptions
 {
+    
     // Perform UI operations on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
         CDVCameraPicker* cameraPicker = [CDVCameraPicker createFromPictureOptions:pictureOptions];
+
+        // Notifications are registered for when touch events are recieved by the window
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(cancelIdleTimer)
+                                                     name:kSendEventTouchesBeganNotification
+                                                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(restartIdleTimer)
+                                                     name:kSendEventTouchesEndedNotification
+                                                   object:nil];
+        [self restartIdleTimer];
+        
         self.pickerController = cameraPicker;
 
         cameraPicker.delegate = self;
         cameraPicker.callbackId = callbackId;
         // we need to capture this state for memory warnings that dealloc this object
         cameraPicker.webView = self.webView;
-    
-        
-        __weak CDVCamera* weakSelf = self;
-        __block CDVCameraPicker* picker = (CDVCameraPicker*)cameraPicker;
-        cameraPicker.idleTimeoutCallback = ^{
-            NSLog(@"HAS PENDING OPERATION = %hd", weakSelf.hasPendingOperation);
-            [weakSelf cancelPickerController:picker];
-        };
-        
-        
-        
-        
+
         // If a popover is already open, close it; we only want one at a time.
         if (([[self pickerController] pickerPopoverController] != nil) && [[[self pickerController] pickerPopoverController] isPopoverVisible]) {
             [[[self pickerController] pickerPopoverController] dismissPopoverAnimated:YES];
@@ -227,17 +257,16 @@ static NSString* toBase64(NSData* data) {
             }
             [self displayPopover:pictureOptions.popoverOptions];
             self.hasPendingOperation = NO;
-            
-            
         } else {
             cameraPicker.modalPresentationStyle = UIModalPresentationCurrentContext;
             [self.viewController presentViewController:cameraPicker animated:YES completion:^{
+//                ///***///
+//                [self restartIdleTimer];
+//                ///***///
                 self.hasPendingOperation = NO;
             }];
         }
     });
-    
-    
 }
 
 - (void)sendNoPermissionResult:(NSString*)callbackId
@@ -301,7 +330,6 @@ static NSString* toBase64(NSData* data) {
 
 - (void)navigationController:(UINavigationController *)navigationController willShowViewController:(UIViewController *)viewController animated:(BOOL)animated
 {
-    
     if([navigationController isKindOfClass:[UIImagePickerController class]]){
         
         // If popoverWidth and popoverHeight are specified and are greater than 0, then set popover size, else use apple's default popoverSize
@@ -511,7 +539,7 @@ static NSString* toBase64(NSData* data) {
     return [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:moviePath];
 }
 
-- (NSString *)createTmpVideo:(NSString *) moviePath {
+- (NSString *) createTmpVideo:(NSString *) moviePath {
     NSString* moviePathExtension = [moviePath pathExtension];
     NSString* copyMoviePath = [self tempFilePath:moviePathExtension];
     NSFileManager* fileMgr = [[NSFileManager alloc] init];
@@ -520,8 +548,17 @@ static NSString* toBase64(NSData* data) {
     return [[NSURL fileURLWithPath:copyMoviePath] absoluteString];
 }
 
+- (void)cancelAndRemoveObservers {
+    [self cancelIdleTimer];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kSendEventTouchesEndedNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kSendEventTouchesBeganNotification object:nil];
+}
+
+#pragma mark - UIImagePickerControllerDelegate
+
 - (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info
 {
+    [self cancelAndRemoveObservers];
 
     __weak CDVCameraPicker* cameraPicker = (CDVCameraPicker*)picker;
     __weak CDVCamera* weakSelf = self;
@@ -565,8 +602,10 @@ static NSString* toBase64(NSData* data) {
     [self imagePickerController:picker didFinishPickingMediaWithInfo:imageInfo];
 }
 
-/// @@@
-- (void)cancelPickerController:(UIImagePickerController*)picker {
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    
+    [self cancelAndRemoveObservers];
+    
     __weak CDVCameraPicker* cameraPicker = (CDVCameraPicker*)picker;
     __weak CDVCamera* weakSelf = self;
     
@@ -578,21 +617,17 @@ static NSString* toBase64(NSData* data) {
             result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"No Image Selected"];
         }
         
-        
         [weakSelf.commandDelegate sendPluginResult:result callbackId:cameraPicker.callbackId];
+        
         weakSelf.hasPendingOperation = NO;
-        [weakSelf.pickerController cancelTimer];
         weakSelf.pickerController = nil;
     };
     
-     [[cameraPicker presentingViewController] dismissViewControllerAnimated:YES completion:invoke];
-
+    [[cameraPicker presentingViewController] dismissViewControllerAnimated:YES completion:invoke];
+    
 }
 
-- (void)imagePickerControllerDidCancel:(UIImagePickerController*)picker
-{
-    [self cancelPickerController:picker];
-}
+#pragma mark - LocationManager
 
 - (CLLocationManager*)locationManager
 {
@@ -732,62 +767,16 @@ static NSString* toBase64(NSData* data) {
 
 @end
 
-
-
-const NSNotificationName UIButtonTouchesEndedNotification = @"UIButtonTouchesEndedNotification";
-const NSNotificationName UIButtonTouchesBeganNotification = @"UIButtonTouchesBeganNotification";
-
 @implementation CDVCameraPicker
 
-//static NSTimer *_idleTimer;
-
-
-#pragma - view controller lifecycle
-
-- (void)viewDidLoad {
-    
-//    NSArray<UIView *> *views = [self getSubviews:self.view];
-    
-    self.view.multipleTouchEnabled = true;
-    self.webView.multipleTouchEnabled = true;
-    for (int i = 0; i < self.view.subviews.count; i++) {
-        UIView *subview = self.view.subviews[i];
-        NSLog(@"subview %@", [subview class]);
-        subview.userInteractionEnabled = true;
-        subview.multipleTouchEnabled = true;
-        if ([subview isKindOfClass:[UINavigationBar class]]) {
-            UINavigationBar *navBar = (UINavigationBar*)subview;
-            for (int i = 0; i < navBar.items.count; i++)  {
-                    NSLog(@"Nav bar subview %@", navBar.items[i]);
-                    navBar.subviews[i].multipleTouchEnabled = true;
-            }
-        }
-    }
-        
-    
-    
-    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
-    [center addObserver:self
-               selector:@selector(restartTimer)
-                   name:UIButtonTouchesEndedNotification object:nil];
-    [center addObserver:self
-               selector:@selector(cancelTimer)
-                   name:UIButtonTouchesBeganNotification object:nil];
-    
-    
-    [self restartTimer];
-    
-    [super viewDidLoad];
+- (BOOL)prefersStatusBarHidden
+{
+    return YES;
 }
 
-- (void)viewWillDisappear:(BOOL)animated {
-    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
-    [center removeObserver:self name:UIButtonTouchesBeganNotification object:nil];
-    [center removeObserver:self name:UIButtonTouchesEndedNotification object:nil];
-
-    [self cancelTimer];
- 
-    [super viewWillDisappear:animated];
+- (UIViewController*)childViewControllerForStatusBarHidden
+{
+    return nil;
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -796,77 +785,11 @@ const NSNotificationName UIButtonTouchesBeganNotification = @"UIButtonTouchesBeg
     if ([self respondsToSelector:sel]) {
         [self performSelector:sel withObject:nil afterDelay:0];
     }
-    
+
     [super viewWillAppear:animated];
 }
 
-- (BOOL)prefersStatusBarHidden
-{
-    return YES;
-}
-
-
-- (UIViewController*)childViewControllerForStatusBarHidden
-{
-    return nil;
-}
-
-/// All view controllers have views which respond to touch events.
-- (void) touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    NSLog(@"TOUCHES BEGAN");
-    [self cancelTimer];
-}
-
-
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    NSLog(@"TOUCHES MOVED");
-
-    [self cancelTimer];
-}
-
-
--(void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    NSLog(@"presses ended");
-    
-}
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    
-    NSLog(@"TOUCHES CANCELLED");
-    [self restartTimer];
-}
-
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    NSLog(@"TOUCHES ENDED");
-    [self restartTimer];
-}
-
-- (void)restartTimer {
-    [self cancelTimer];
-    NSLog(@"Start Timer");
-    NSTimeInterval idleTime = _pictureOptions.idleTimeout.doubleValue;
-    // Idle time + tolerance (+10%)
-    NSTimeInterval timeInterval = idleTime + idleTime*0.1;
-
-    SEL selector = NSSelectorFromString(@"cancelPicker");
-    [self performSelector:selector withObject:nil afterDelay:timeInterval];
-    
-}
-
-- (void)cancelTimer {
-    NSLog(@"Cancel Timer");
-    [CDVCameraPicker cancelPreviousPerformRequestsWithTarget:self];
-}
-
-- (void)didUpdateFocusInContext:(UIFocusUpdateContext *)context withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
-    NSLog(@"hello");
-}
-- (void) cancelPicker {
-    [self cancelTimer];
-    
-    if (self.idleTimeoutCallback != nil) self.idleTimeoutCallback();
-}
-
-+ (instancetype) createFromPictureOptions:(CDVPictureOptions*)pictureOptions
++ (instancetype) createFromPictureOptions:(CDVPictureOptions*)pictureOptions;
 {
     CDVCameraPicker* cameraPicker = [[CDVCameraPicker alloc] init];
     cameraPicker.pictureOptions = pictureOptions;
@@ -885,41 +808,7 @@ const NSNotificationName UIButtonTouchesBeganNotification = @"UIButtonTouchesBeg
         cameraPicker.mediaTypes = mediaArray;
     }
 
-
     return cameraPicker;
-}
-
-@end
-
-
-@implementation UIButton (TouchEventNotifications)
-
-- (void) touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [super touchesBegan:touches withEvent:event];
-    NSLog(@"BUTTON Touches began");
-    [[NSNotificationCenter defaultCenter] postNotificationName:UIButtonTouchesBeganNotification object:nil];
-}
-
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [super touchesCancelled:touches withEvent:event];
-    NSLog(@"BUTTON Touches cancelled");
-}
-
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [super touchesMoved:touches withEvent:event];
-}
-
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [super touchesEnded:touches withEvent:event];
-    NSLog(@"UIBUTTON Touches ended");
-//    [self performSelector:NSSelectorFromString(@"restartTimer") withObject:nil afterDelay:6]
-//    NSLog(@"%@", [self class]);
-     
-    // if the button that is responsible for taking the picture is pressed, don't send this notification.
-    if ([NSStringFromClass([self class]) isEqualToString: @"CUShutterButton"]) return;
-        
-    [[NSNotificationCenter defaultCenter] postNotificationName:UIButtonTouchesEndedNotification object:nil];
-    
 }
 
 @end
