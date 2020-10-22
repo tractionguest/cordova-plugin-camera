@@ -149,7 +149,7 @@ static NSString* toBase64(NSData* data) {
     [self cancelIdleTimer];
     
     // Call the method that dismisses the image picker controller after the idle timeout has elapsed
-    [self performSelector:@selector(imagePickerControllerDidCancel:)
+    [self performSelector:@selector(closeCamera:)
                withObject:self.pickerController
                afterDelay:self.idleTimeout];
 }
@@ -596,6 +596,27 @@ static NSString* toBase64(NSData* data) {
     [self imagePickerController:picker didFinishPickingMediaWithInfo:imageInfo];
 }
 
+- (void)closeCamera:(UIImagePickerController*)picker
+{
+    // If a popover is already open, close it
+    if (([[self pickerController] pickerPopoverController] != nil) && [[[self pickerController] pickerPopoverController] isPopoverVisible]) {
+        [[[self pickerController] pickerPopoverController] dismissPopoverAnimated:YES];
+        [[[self pickerController] pickerPopoverController] setDelegate:nil];
+        [[self pickerController] setPickerPopoverController:nil];
+        [self cancelAndRemoveObservers];
+    }
+    
+    [self.pickerController dismissViewControllerAnimated:NO completion:^{
+        [self cancelAndRemoveObservers];
+
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"camera dismissed - idle timeout reached"];
+        [self.commandDelegate sendPluginResult:result callbackId:self.pickerController.callbackId];
+        
+        self.hasPendingOperation = NO;
+        self.pickerController = nil;
+    }];
+    
+}
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
     
     [self cancelAndRemoveObservers];
