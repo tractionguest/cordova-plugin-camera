@@ -105,6 +105,8 @@
          <header-file src="src/ios/CDVJpegHeaderWriter.h" />
          <source-file src="src/ios/CDVJpegHeaderWriter.m" />
          <header-file src="src/ios/CDVExif.h" />
+         <header-file src="src/ios/UIWindow+TouchInterceptor.h" />
+         <source-file src="src/ios/UIWindow+TouchInterceptor.m" />
          <framework src="ImageIO.framework" weak="true" />
          <framework src="CoreLocation.framework" />
          <framework src="CoreGraphics.framework" />

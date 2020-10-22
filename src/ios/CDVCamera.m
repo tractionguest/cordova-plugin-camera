@@ -19,6 +19,7 @@
 
 #import "CDVCamera.h"
 #import "CDVJpegHeaderWriter.h"
+#import "UIWindow+TouchInterceptor.h"
 #import "UIImage+CropScaleOrientation.h"
 #import <ImageIO/CGImageProperties.h>
 #import <AssetsLibrary/ALAssetRepresentation.h>
@@ -81,7 +82,7 @@ static NSString* toBase64(NSData* data) {
     pictureOptions.saveToPhotoAlbum = [[command argumentAtIndex:9 withDefault:@(NO)] boolValue];
     pictureOptions.popoverOptions = [command argumentAtIndex:10 withDefault:nil];
     pictureOptions.cameraDirection = [[command argumentAtIndex:11 withDefault:@(UIImagePickerControllerCameraDeviceRear)] unsignedIntegerValue];
-
+    pictureOptions.idleTimeout = [command argumentAtIndex:12 withDefault:nil];
     pictureOptions.popoverSupported = NO;
     pictureOptions.usesGeolocation = NO;
 
@@ -94,6 +95,7 @@ static NSString* toBase64(NSData* data) {
 @interface CDVCamera ()
 
 @property (readwrite, assign) BOOL hasPendingOperation;
+@property (readwrite, assign) NSTimeInterval idleTimeout;
 
 @end
 
@@ -104,7 +106,7 @@ static NSString* toBase64(NSData* data) {
     org_apache_cordova_validArrowDirections = [[NSSet alloc] initWithObjects:[NSNumber numberWithInt:UIPopoverArrowDirectionUp], [NSNumber numberWithInt:UIPopoverArrowDirectionDown], [NSNumber numberWithInt:UIPopoverArrowDirectionLeft], [NSNumber numberWithInt:UIPopoverArrowDirectionRight], [NSNumber numberWithInt:UIPopoverArrowDirectionAny], nil];
 }
 
-@synthesize hasPendingOperation, pickerController, locationManager;
+@synthesize hasPendingOperation, pickerController, locationManager, idleTimeout;
 
 - (NSURL*) urlTransformer:(NSURL*)url
 {
@@ -136,8 +138,39 @@ static NSString* toBase64(NSData* data) {
            (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
 }
 
+#pragma mark - Idle Timeout
+// Trigger method when a kTouchesEndedNotification is received,
+// originating from [sendEvent:] in the UIWindow+TouchInterceptor class
+- (void)restartIdleTimer
+{
+    // return early - no idle timeouts
+    if (self.idleTimeout <= 0) return;
+    
+    [self cancelIdleTimer];
+    
+    // Call the method that dismisses the image picker controller after the idle timeout has elapsed
+    [self performSelector:@selector(closeCamera:)
+               withObject:self.pickerController
+               afterDelay:self.idleTimeout];
+}
+
+// Cancel idle timer when a kTouchesBeganNotification is received
+// originating from [sendEvent:] in the UIWindow+TouchInterceptor class
+- (void)cancelIdleTimer {
+    if (self.idleTimeout <= 0) return;
+    // cancels the request made in restartIdleTimer
+    [CDVCamera cancelPreviousPerformRequestsWithTarget:self];
+}
+
+
 - (void)takePicture:(CDVInvokedUrlCommand*)command
 {
+    NSNumber *timeout = [CDVPictureOptions createFromTakePictureArguments:command].idleTimeout;
+    // If timeout is nil, give it a value of 0
+    // if it is 0 the idle timer functions will return without performing the selector
+    if (timeout == nil) timeout = [NSNumber numberWithDouble:0.0];
+    self.idleTimeout = [timeout doubleValue];
+
     self.hasPendingOperation = YES;
     __weak CDVCamera* weakSelf = self;
 
@@ -185,9 +218,22 @@ static NSString* toBase64(NSData* data) {
 
 - (void)showCameraPicker:(NSString*)callbackId withOptions:(CDVPictureOptions *) pictureOptions
 {
+    
     // Perform UI operations on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
         CDVCameraPicker* cameraPicker = [CDVCameraPicker createFromPictureOptions:pictureOptions];
+
+        // Notifications are registered for when touch events are recieved by the window
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(cancelIdleTimer)
+                                                     name:kSendEventTouchesBeganNotification
+                                                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(restartIdleTimer)
+                                                     name:kSendEventTouchesEndedNotification
+                                                   object:nil];
+        [self restartIdleTimer];
+        
         self.pickerController = cameraPicker;
 
         cameraPicker.delegate = self;
@@ -496,8 +542,18 @@ static NSString* toBase64(NSData* data) {
     return [[NSURL fileURLWithPath:copyMoviePath] absoluteString];
 }
 
+- (void)cancelAndRemoveObservers {
+    [self cancelIdleTimer];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kSendEventTouchesEndedNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kSendEventTouchesBeganNotification object:nil];
+}
+
+#pragma mark - UIImagePickerControllerDelegate
+
 - (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info
 {
+    [self cancelAndRemoveObservers];
+
     __weak CDVCameraPicker* cameraPicker = (CDVCameraPicker*)picker;
     __weak CDVCamera* weakSelf = self;
 
@@ -540,11 +596,34 @@ static NSString* toBase64(NSData* data) {
     [self imagePickerController:picker didFinishPickingMediaWithInfo:imageInfo];
 }
 
-- (void)imagePickerControllerDidCancel:(UIImagePickerController*)picker
+- (void)closeCamera:(UIImagePickerController*)picker
 {
+    // If a popover is already open, close it
+    if (([[self pickerController] pickerPopoverController] != nil) && [[[self pickerController] pickerPopoverController] isPopoverVisible]) {
+        [[[self pickerController] pickerPopoverController] dismissPopoverAnimated:YES];
+        [[[self pickerController] pickerPopoverController] setDelegate:nil];
+        [[self pickerController] setPickerPopoverController:nil];
+        [self cancelAndRemoveObservers];
+    }
+    
+    [self.pickerController dismissViewControllerAnimated:NO completion:^{
+        [self cancelAndRemoveObservers];
+
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"camera dismissed - idle timeout reached"];
+        [self.commandDelegate sendPluginResult:result callbackId:self.pickerController.callbackId];
+        
+        self.hasPendingOperation = NO;
+        self.pickerController = nil;
+    }];
+    
+}
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    
+    [self cancelAndRemoveObservers];
+    
     __weak CDVCameraPicker* cameraPicker = (CDVCameraPicker*)picker;
     __weak CDVCamera* weakSelf = self;
-
+    
     dispatch_block_t invoke = ^ (void) {
         CDVPluginResult* result;
         if (picker.sourceType == UIImagePickerControllerSourceTypeCamera && [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] != AVAuthorizationStatusAuthorized) {
@@ -552,16 +631,18 @@ static NSString* toBase64(NSData* data) {
         } else {
             result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"No Image Selected"];
         }
-
-
+        
         [weakSelf.commandDelegate sendPluginResult:result callbackId:cameraPicker.callbackId];
-
+        
         weakSelf.hasPendingOperation = NO;
         weakSelf.pickerController = nil;
     };
-
+    
     [[cameraPicker presentingViewController] dismissViewControllerAnimated:YES completion:invoke];
+    
 }
+
+#pragma mark - LocationManager
 
 - (CLLocationManager*)locationManager
 {
